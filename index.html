@@ -1535,7 +1535,87 @@ function renderHcDiarioGrid(dateISO) {
       <span style="font-size:12px;color:var(--text-tertiary)">${dateISO ? 'Sem registros de presença para este dia.' : 'Selecione uma data para ver a presença.'}</span>
     </div>`;
 
-  banner.innerHTML = hcTotalBlock + presencaBlock;
+  // ── Velocímetro de nível de presença ──
+  function buildGaugeSVG(pct) {
+    // Zonas: <60 vermelho, 60-70 laranja, 70-75 mostarda, 75-80 verde-clarinho, 80-85 verde-claro, 85-90 verde, >=90 verde-escuro
+    const zones = [
+      { from: 0,   to: 60,  color: '#dc2626' }, // vermelho
+      { from: 60,  to: 70,  color: '#f97316' }, // laranja
+      { from: 70,  to: 75,  color: '#eab308' }, // mostarda
+      { from: 75,  to: 80,  color: '#a3e635' }, // verde-clarinho
+      { from: 80,  to: 85,  color: '#4ade80' }, // verde-claro
+      { from: 85,  to: 90,  color: '#22c55e' }, // verde
+      { from: 90,  to: 100, color: '#15803d' }, // verde-escuro
+    ];
+    const cx = 90, cy = 90, r = 68, stroke = 18;
+    const startAngle = Math.PI;      // 180° — esquerda
+    const endAngle   = 2 * Math.PI; // 360° — direita (arco superior)
+    const totalDeg = 180;
+
+    function polarToXY(pctVal, radius) {
+      const angle = Math.PI + (pctVal / 100) * Math.PI;
+      return { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
+    }
+    function arcPath(fromPct, toPct, ri, ro) {
+      const s = polarToXY(fromPct, ri), S = polarToXY(fromPct, ro);
+      const e = polarToXY(toPct,   ri), E = polarToXY(toPct,   ro);
+      const large = (toPct - fromPct) > 50 ? 1 : 0;
+      return `M${S.x},${S.y} A${ro},${ro} 0 ${large} 1 ${E.x},${E.y} L${e.x},${e.y} A${ri},${ri} 0 ${large} 0 ${s.x},${s.y} Z`;
+    }
+
+    const ri = r - stroke, ro = r;
+    const segments = zones.map(z => {
+      const p = arcPath(z.from, z.to, ri, ro);
+      return `<path d="${p}" fill="${z.color}" opacity="0.92"/>`;
+    }).join('');
+
+    // Ponteiro
+    const needlePct = Math.min(100, Math.max(0, pct));
+    const angle = Math.PI + (needlePct / 100) * Math.PI;
+    const nLen = r - 4, nW = 3;
+    const nx = cx + nLen * Math.cos(angle);
+    const ny = cy + nLen * Math.sin(angle);
+    const px1x = cx + nW * Math.cos(angle + Math.PI/2);
+    const px1y = cy + nW * Math.sin(angle + Math.PI/2);
+    const px2x = cx + nW * Math.cos(angle - Math.PI/2);
+    const px2y = cy + nW * Math.sin(angle - Math.PI/2);
+
+    // Labels de zona
+    const labels = [
+      { pct: 5,  txt: '0%',  fs: 8 },
+      { pct: 33, txt: '60%', fs: 8 },
+      { pct: 50, txt: '75%', fs: 8 },
+      { pct: 67, txt: '85%', fs: 8 },
+      { pct: 95, txt: '100%',fs: 8 },
+    ].map(l => {
+      const pos = polarToXY(l.pct, ro + 10);
+      return `<text x="${pos.x}" y="${pos.y}" text-anchor="middle" dominant-baseline="middle" font-size="${l.fs}" fill="currentColor" opacity="0.55">${l.txt}</text>`;
+    }).join('');
+
+    // Cor do valor central
+    const valColor = pct >= 90 ? '#15803d' : pct >= 85 ? '#22c55e' : pct >= 80 ? '#4ade80' : pct >= 75 ? '#a3e635' : pct >= 70 ? '#eab308' : pct >= 60 ? '#f97316' : '#dc2626';
+    const nivel = pct >= 90 ? 'Ótimo' : pct >= 85 ? 'Bom' : pct >= 80 ? 'Regular' : pct >= 75 ? 'Alerta' : pct >= 70 ? 'Crítico' : 'Grave';
+
+    return `<svg viewBox="0 0 180 105" xmlns="http://www.w3.org/2000/svg" style="width:180px;height:105px;flex-shrink:0">
+      <g opacity="0.18"><path d="${arcPath(0,100,ri,ro)}" fill="#888"/></g>
+      ${segments}
+      <polygon points="${nx},${ny} ${px1x},${px1y} ${px2x},${px2y}" fill="var(--text,#1a1a1a)" opacity="0.85"/>
+      <circle cx="${cx}" cy="${cy}" r="6" fill="var(--text,#1a1a1a)" opacity="0.85"/>
+      <circle cx="${cx}" cy="${cy}" r="3" fill="var(--bg,#fff)"/>
+      <text x="${cx}" y="${cy+22}" text-anchor="middle" font-size="20" font-weight="800" fill="${valColor}" font-family="sans-serif">${pct !== null ? pct+'%' : '—'}</text>
+      <text x="${cx}" y="${cy+36}" text-anchor="middle" font-size="10" fill="${valColor}" font-family="sans-serif" opacity="0.85">${nivel}</text>
+      ${labels}
+    </svg>`;
+  }
+
+  const pctPresenca = totalFixo > 0 && dateISO ? Math.round((totalPres / totalFixo) * 100) : null;
+  const gaugeHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;border-left:0.5px solid var(--border);padding-left:20px;flex-shrink:0">
+      <div style="font-size:10px;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px;text-align:center">Nível Presença</div>
+      ${pctPresenca !== null ? buildGaugeSVG(pctPresenca) : `<div style="font-size:12px;color:var(--text-tertiary);padding:20px">—</div>`}
+    </div>`;
+
+  banner.innerHTML = hcTotalBlock + presencaBlock + gaugeHTML;
   grids.appendChild(banner);
 
   // Cards por supervisor — sempre exibidos se houver HC fixo
@@ -1600,110 +1680,6 @@ function renderHcDiarioGrid(dateISO) {
     grids.appendChild(card);
     setTimeout(() => drawHcDoughnut(cKey, d, sup.color), 60);
   });
-
-  // ── Velocímetro de Nível de Presença ──
-  if (dateISO) {
-    const gaugeWrap = document.createElement('div');
-    gaugeWrap.style.cssText = 'grid-column:1/-1;background:var(--bg);border:0.5px solid var(--border);border-radius:var(--radius-lg);padding:1.2rem 1.5rem;display:flex;flex-direction:column;align-items:center;';
-
-    const pctPres = totalFixo > 0 ? (totalPres / totalFixo) * 100 : 0;
-
-    // Definição dos níveis
-    const niveis = [
-      { min: 0,  max: 60, label: 'Crítico',       cor: '#dc2626' },
-      { min: 60, max: 70, label: 'Baixo',          cor: '#ea580c' },
-      { min: 70, max: 75, label: 'Alerta',         cor: '#d97706' },
-      { min: 75, max: 80, label: 'Moderado',       cor: '#ca8a04' },
-      { min: 80, max: 85, label: 'Satisfatório',   cor: '#84cc16' },
-      { min: 85, max: 90, label: 'Bom',            cor: '#22c55e' },
-      { min: 90, max: 100, label: 'Excelente',     cor: '#15803d' },
-    ];
-
-    // Nível atual
-    const nivelAtual = niveis.find(n => pctPres >= n.min && pctPres < n.max) || niveis[niveis.length - 1];
-
-    // Parâmetros do arco semicircular (SVG)
-    // Arco vai de 180° a 0° (esquerda → direita), semicírculo superior
-    const cx = 200, cy = 180, r = 130, rInner = 80;
-
-    function polarToCart(deg, radius) {
-      const rad = (deg * Math.PI) / 180;
-      return { x: cx + radius * Math.cos(rad), y: cy - radius * Math.sin(rad) };
-    }
-
-    function arcPath(startDeg, endDeg, rOuter, rIn) {
-      const s1 = polarToCart(startDeg, rOuter);
-      const e1 = polarToCart(endDeg, rOuter);
-      const s2 = polarToCart(endDeg, rIn);
-      const e2 = polarToCart(startDeg, rIn);
-      const large = (startDeg - endDeg) > 180 ? 1 : 0;
-      return `M${s1.x},${s1.y} A${rOuter},${rOuter},0,${large},0,${e1.x},${e1.y} L${s2.x},${s2.y} A${rIn},${rIn},0,${large},1,${e2.x},${e2.y} Z`;
-    }
-
-    // Cada segmento ocupa proporção do intervalo [60°..120°] → 180° total
-    const totalRange = 100; // 0% a 100%
-    const arcStart = 180, arcEnd = 0; // em graus (esquerda = 0%, direita = 100%)
-
-    const segmentos = niveis.map(n => {
-      const dStart = arcStart - (n.min / totalRange) * 180;
-      const dEnd   = arcStart - (n.max / totalRange) * 180;
-      return { ...n, dStart, dEnd };
-    }).reverse(); // SVG desenha por cima, então inverter
-
-    const segsSVG = segmentos.map(s =>
-      `<path d="${arcPath(s.dStart, s.dEnd, r, rInner)}" fill="${s.cor}" opacity="0.85"/>`
-    ).join('');
-
-    // Ponteiro
-    const agulhaDeg = arcStart - (Math.min(Math.max(pctPres, 0), 100) / 100) * 180;
-    const agulhaRad = (agulhaDeg * Math.PI) / 180;
-    const agulhaLen = 110;
-    const ax = cx + agulhaLen * Math.cos(agulhaRad);
-    const ay = cy - agulhaLen * Math.sin(agulhaRad);
-
-    // Labels nos extremos e meio
-    const labelsSVG = [
-      { deg: 180, txt: '0%' },
-      { deg: 135, txt: '25%' },
-      { deg: 90,  txt: '50%' },
-      { deg: 45,  txt: '75%' },
-      { deg: 0,   txt: '100%' },
-    ].map(l => {
-      const p = polarToCart(l.deg, r + 18);
-      return `<text x="${p.x}" y="${p.y}" text-anchor="middle" dominant-baseline="middle" font-size="11" font-weight="600" fill="var(--text-secondary)">${l.txt}</text>`;
-    }).join('');
-
-    // Labels dos níveis dentro dos segmentos
-    const niveisLabelsSVG = niveis.map(n => {
-      const midDeg = arcStart - ((n.min + n.max) / 2 / totalRange) * 180;
-      const p = polarToCart(midDeg, (r + rInner) / 2);
-      const fontSize = n.max - n.min <= 5 ? 8 : 9;
-      return `<text x="${p.x}" y="${p.y}" text-anchor="middle" dominant-baseline="middle" font-size="${fontSize}" font-weight="700" fill="#fff">${n.label}</text>`;
-    }).join('');
-
-    const [y_,m_,d_] = dateISO.split('-');
-    const dateFmt = `${d_}/${m_}/${y_}`;
-
-    gaugeWrap.innerHTML = `
-      <div style="font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.12em;margin-bottom:8px">Nível de Presença da Operação · ${dateFmt}</div>
-      <svg viewBox="0 0 400 200" width="100%" style="max-width:420px;display:block">
-        ${segsSVG}
-        ${labelsSVG}
-        ${niveisLabelsSVG}
-        <!-- Fundo central (tampão do anel) -->
-        <circle cx="${cx}" cy="${cy}" r="${rInner - 2}" fill="var(--bg)"/>
-        <!-- Ponteiro -->
-        <line x1="${cx}" y1="${cy}" x2="${ax}" y2="${ay}" stroke="var(--text)" stroke-width="3" stroke-linecap="round"/>
-        <circle cx="${cx}" cy="${cy}" r="8" fill="var(--text)"/>
-        <circle cx="${cx}" cy="${cy}" r="4" fill="var(--bg)"/>
-        <!-- Valor central -->
-        <text x="${cx}" y="${cy - 15}" text-anchor="middle" font-size="26" font-weight="800" fill="${nivelAtual.cor}">${Math.round(pctPres)}%</text>
-        <text x="${cx}" y="${cy + 8}" text-anchor="middle" font-size="11" font-weight="600" fill="${nivelAtual.cor}">${nivelAtual.label}</text>
-        <text x="${cx}" y="${cy + 22}" text-anchor="middle" font-size="10" fill="var(--text-secondary)">${totalPres} de ${totalFixo} HC</text>
-      </svg>`;
-
-    grids.appendChild(gaugeWrap);
-  }
 }
 
 function renderHcDiario(dateISO) {
